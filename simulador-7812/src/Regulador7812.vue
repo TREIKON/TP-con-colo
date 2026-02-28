@@ -6,7 +6,7 @@
     <div class="controls">
       <label>
         Vin: {{ vinValue.toFixed(2) }} V
-        <input type="range" min="11" max="18" step="0.1" v-model.number="vinValue" />
+        <input type="range" min="14" max="18" step="0.1" v-model.number="vinValue" />
       </label>
 
       <!-- CONFIGURAR PERTURBACIÓN DINÁMICA -->

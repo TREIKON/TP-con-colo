@@ -50,11 +50,11 @@
     <div v-if="isMultiChart">
       <ChartComponent :height="180" :labels="labels" :datasetLabels="['Vin', 'Vout']" :datasetData="[vinData, voutData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
       <ChartComponent :height="180" :labels="labels" :datasetLabels="['Perturbación']" :datasetData="[disturbanceData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
-      <ChartComponent :height="180" :labels="labels" :datasetLabels="['Error', 'Control']" :datasetData="[errorData, controlData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
+      <ChartComponent :height="180" :labels="labels" :datasetLabels="['Error']" :datasetData="[errorData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
     </div>
 
     <div v-else>
-      <ChartComponent :height="540" :labels="labels" :datasetLabels="['Vin', 'Vout', 'Error', 'Control', 'Perturbación']" :datasetData="[vinData, voutData, errorData, controlData, disturbanceData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
+      <ChartComponent :height="540" :labels="labels" :datasetLabels="['Vin', 'Vout', 'Error', 'Perturbación']" :datasetData="[vinData, voutData, errorData, disturbanceData]" :windowStart="windowStart" :windowSize="WINDOW_SIZE" />
     </div>
   </div>
 </template>
@@ -113,43 +113,64 @@ export default {
     function simulationStep() {
       time += DT
 
+      // --- 1. ENTRADAS DEL SISTEMA ---
+      // r: Valor de Referencia (Set-point). Lo que queremos alcanzar.
+      const r = VREF; 
+      
+      // d1: Perturbación de Entrada (Tensión del transformador + Rizado).
+      // No es la referencia, es una fuente de energía variable que el control debe rechazar.
       const ripple = showRipple.value ? 0.2 * Math.sin(2 * Math.PI * 4 * time) : 0;
-      const vin = vinValue.value + ripple;
-      
-      // 1. OBTENEMOS LA PERTURBACIÓN
-      const rawDisturbance = getPerturbation(time);
-      
-      // 2. LIMITAMOS EL IMPACTO DE LA PERTURBACIÓN (Saturación de carga)
-      // Esto evita que Vout se vaya a 0 a menos que sea un corto total.
-      // Limitamos a que la carga no pueda restar más de lo que el sistema intenta subir.
-      const maxAllowedImpact = (vin - DROP) * 0.8; 
-      const effectiveDisturbance = Math.min(rawDisturbance, maxAllowedImpact);
+      const d1_entrada = vinValue.value + ripple;
 
-      error.value = VREF - vout.value;
-      control.value = KP * error.value;
+      // d2: Perturbación de Carga (Ruido eléctrico/Motores).
+      const d2_carga = getPerturbation(time);
 
-      // 3. NUEVA ECUACIÓN DE DINÁMICA
-      // Separamos la energía de entrada (Vin - DROP) de la corrección del control.
-      const voutObjetivo = (vin - DROP) + (control.value * 0.5) - effectiveDisturbance;
+      // --- 2. LAZO DE CONTROL (Controlador Proporcional) ---
       
-      // dv es la velocidad con la que vout intenta llegar al objetivo
-      const dv = voutObjetivo - vout.value;
-      vout.value += 0.15 * dv; // Factor de suavizado (inercia de capacitores)
+      // Señal de Error: e(t) = r(t) - y(t)
+      // Representa la desviación de la salida respecto a la referencia de 12V.
+      error.value = r - vout.value;
 
-      // 4. SATURACIONES FINALES (Protecciones de Bolton)
-      // Vout no puede ser mayor a la entrada menos el dropout
-      if (vout.value > (vin - DROP)) vout.value = (vin - DROP);
-      // Vout no puede superar el límite superior de seguridad
-      if (vout.value > VREF + 0.5) vout.value = VREF + 0.5;
+      // Acción de Control: u(t) = Kp * e(t)
+      // Es la "señal necesaria" para corregir el sistema. 
+      // Usamos un KP de 50 para un buen compromiso entre velocidad y estabilidad.
+      let u = 50 * error.value;
+
+      // --- 3. ACTUADOR Y SATURACIÓN (Límites Físicos) ---
+      
+      // El transistor de paso del 7812 no puede entregar más de lo que recibe 
+      // menos su caída interna (V_drop).
+      const limiteFisicoActuador = d1_entrada - DROP;
+      
+      // El control real aplicado (ua) se satura por la física del componente.
+      control.value = Math.max(0, Math.min(u, limiteFisicoActuador));
+
+      // --- 4. PLANTA / PROCESO (Modelo de la dinámica) ---
+      
+      // y(t): Salida del sistema (Vout).
+      // Aplicamos un factor de suavizado (0.07) para simular la inercia de los 
+      // capacitores de filtrado (evita los picos instantáneos molestos).
+      const suavizado = 0.07; 
+      
+      // La fuerza neta que mueve la salida es el esfuerzo del control 
+      // menos la perturbación que genera la carga.
+      const fuerzaNeta = control.value - d2_carga;
+      
+      // Ecuación diferencial simplificada (Modelo de primer orden):
+      const dy = fuerzaNeta - vout.value;
+      vout.value += suavizado * dy;
+
+      // --- 5. PROTECCIONES FINALES ---
+      if (vout.value > limiteFisicoActuador) vout.value = limiteFisicoActuador;
       if (vout.value < 0) vout.value = 0;
 
-      // Guardado de datos
+      // --- 6. REGISTRO DE DATOS ---
       labels.value.push(time.toFixed(2))
-      vinData.value.push(vin)
+      vinData.value.push(d1_entrada) // Visualizamos Vin como la perturbación de línea
       voutData.value.push(vout.value)
       errorData.value.push(error.value)
       controlData.value.push(control.value)
-      disturbanceData.value.push(rawDisturbance)
+      disturbanceData.value.push(d2_carga)
 
       if (windowStart.value >= maxWindowStart.value - 1) {
         windowStart.value = maxWindowStart.value

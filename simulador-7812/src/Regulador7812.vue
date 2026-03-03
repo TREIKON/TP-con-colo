@@ -60,7 +60,6 @@
 </template>
 
 <script>
-// ... (El script se mantiene igual al que pasaste, ya que contiene la lógica de maxWindowStart y windowStart)
 import { ref, computed } from "vue"
 import ChartComponent from "./components/Chart.vue"
 
@@ -68,10 +67,9 @@ export default {
   components: { ChartComponent },
   setup() {
     const VREF = 12
-    const KP = 1.2
     const DROP = 2
     const DT = 0.05
-    const WINDOW_SIZE = 30
+    const WINDOW_SIZE = 60
 
     const vinValue = ref(14)
     const vout = ref(0)
